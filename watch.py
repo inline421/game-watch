@@ -3,6 +3,7 @@
 postponed/delayed, moved indoors / venue change, kickoff moved, big total move, NFL QB status. Alerts -> GitHub issue (@mention) + ntfy push."""
 import os, sys, json, time, re, hashlib, subprocess, urllib.request, urllib.parse, datetime as dt
 import xml.etree.ElementTree as ET
+import wx
 HERE = os.path.dirname(os.path.abspath(__file__))
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", "Accept": "application/json,text/xml,*/*"}
 ESPN = "https://site.api.espn.com/apis/site/v2/sports/football/%s"
@@ -108,7 +109,8 @@ def save(st):
 def main():
     games = json.load(open(os.path.join(HERE, "games.json")))
     st = json.load(open(SF)) if os.path.exists(SF) else {}
-    t0 = time.time(); last_save = t0; i = 0
+    t0 = time.time(); last_save = t0; i = 0; last_wx = 0
+    wxg = json.load(open(os.path.join(HERE, 'wx_games.json')))
     while True:
         n = now(); today = (n - dt.timedelta(hours=10)).strftime("%Y-%m-%d"); hor = (n + dt.timedelta(days=3)).strftime("%Y-%m-%d")
         act = [g for g in games if today <= g["date"] <= hor]
@@ -122,6 +124,12 @@ def main():
             except Exception as e: print("inj fail", str(e)[:60])
         for title, why in check(act, st, sb, hl):
             notify("DRASTIC CHANGE ALERT: %s - %s" % (title, why[0]), "**%s**\n\n" % title + "\n".join("- " + w for w in why))
+        if time.time() - last_wx > 600:
+            last_wx = time.time()
+            try:
+                for title, notes in wx.run(wxg, st, now()):
+                    notify('DRASTIC CHANGE ALERT: ' + title, '**%s**\n\n' % title + '\n'.join('- ' + w for w in notes))
+            except Exception as e: print('wx err', str(e)[:80])
         i += 1
         if time.time() - last_save > 1800: save(st); last_save = time.time()
         if time.time() - t0 + POLL > LIVE: break
