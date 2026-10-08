@@ -11,7 +11,9 @@ ALIAS = {"BAMA": "ALA", "UL": "LA", "LT": "LT", "SC": "SC"}
 BAD = ("POSTPONED", "CANCELED", "CANCELLED", "SUSPENDED", "DELAYED", "DELAY", "FORFEIT", "ABANDONED")
 BAD_INJ = ("out", "doubtful", "injured reserve", "suspended", "inactive")
 KEYS = re.compile(r"moved indoors|relocat|postpon|cancel|ruled out|will not play|won't play|inactive|suspend|scratch|benched|out for|lost for the season|game delayed|moved to", re.I)
-FB = re.compile(r"game|football|kickoff|stadium|quarterback|\bQB\b|coach|receiver|running back|tailback|linebacker|bowl|matchup|\bvs\.?\b|roster|injur|\bNFL\b|\bNCAA\b|\bCFB\b", re.I)
+FB = re.compile(r"football|kickoff|stadium|quarterback|\bQB\b|\bbowl\b|\bNFL\b|\bNCAA\b|\bCFB\b|touchdown|gridiron|running back|wide receiver|offensive line|head coach", re.I)
+# noise: non-football stories (politics etc.), hypotheticals, and College GameDay venue news (GameDay moving is NOT the game moving)
+NOISE = re.compile(r"voter|election|ballot|senate|congress|legislat|governor|police|arrest|lawsuit|gameday|what happens if|what if|\?\s*(-|$)|odds|picks?\b|prediction|preview|how to watch|betting", re.I)
 REPO = os.environ.get("GITHUB_REPOSITORY", "inline421/game-watch"); TOKEN = os.environ.get("GH_TOKEN", "")
 NTFY = os.environ.get("NTFY_TOPIC", "")
 LIVE = int(os.environ.get("LIVE_SECONDS") or 20400); POLL = int(os.environ.get("POLL_SECONDS") or 30)
@@ -93,7 +95,10 @@ def check(games, st, sb_cache, hl):
                     hid = hashlib.md5(t.encode()).hexdigest()[:10]
                     if hid in seen: continue
                     seen.add(hid)
-                    if KEYS.search(t) and FB.search(t) and any(x.lower() in t.lower() for x in names.values()): new.append(t)
+                    tl = t.lower()
+                    hits = [x for x in names.values() if x.lower() in tl]
+                    # need football context, no noise, and BOTH teams named (or one team plus an explicit football word)
+                    if KEYS.search(t) and FB.search(t) and not NOISE.search(t) and (len(hits) >= 2 or (hits and re.search(r"football|quarterback|\bQB\b|\bNFL\b", t, re.I))): new.append(t)
                 cur["seen"] = list(seen)[-80:]
                 if s0.get("kick"):
                     for t in new[:3]: why.append("HEADLINE: " + t[:140])
