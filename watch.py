@@ -13,7 +13,7 @@ BAD_INJ = ("out", "doubtful", "injured reserve", "suspended", "inactive")
 KEYS = re.compile(r"moved indoors|relocat|postpon|cancel|ruled out|will not play|won't play|inactive|suspend|scratch|benched|out for|lost for the season|game delayed|moved to", re.I)
 FB = re.compile(r"football|kickoff|stadium|quarterback|\bQB\b|\bbowl\b|\bNFL\b|\bNCAA\b|\bCFB\b|touchdown|gridiron|running back|wide receiver|offensive line|head coach", re.I)
 # noise: non-football stories (politics etc.), hypotheticals, and College GameDay venue news (GameDay moving is NOT the game moving)
-NOISE = re.compile(r"voter|election|ballot|senate|congress|legislat|governor|police|arrest|lawsuit|gameday|what happens if|what if|\?\s*(-|$)|odds|picks?\b|prediction|preview|how to watch|betting|high school|senior high|\bprep\b|lawyer|council|murder|moratorium|school board|\bdistrict\b", re.I)
+NOISE = re.compile(r"voter|election|ballot|senate|congress|legislat|governor|police|arrest|lawsuit|gameday|what happens if|what if|\?\s*(-|$)|odds|picks?\b|prediction|preview|how to watch|betting|high school|senior high|\bprep\b|lawyer|council|murder|moratorium|school board|\bdistrict\b|central florida|\bUCF\b|south florida|florida atlantic|florida international|\bFIU\b|\bFAU\b|miami \(oh\)|isaias", re.I)
 REPO = os.environ.get("GITHUB_REPOSITORY", "inline421/game-watch"); TOKEN = os.environ.get("GH_TOKEN", "")
 NTFY = os.environ.get("NTFY_TOPIC", "")
 LIVE = int(os.environ.get("LIVE_SECONDS") or 20400); POLL = int(os.environ.get("POLL_SECONDS") or 30)
@@ -65,7 +65,7 @@ def flush(st):
     send_now("DRASTIC CHANGE ALERT: " + " | ".join(parts), body)
 
 def send_now(title, body):
-    if TOKEN:
+    if False:
         try:
             req = urllib.request.Request("https://api.github.com/repos/%s/issues" % REPO, data=json.dumps({"title": title[:200], "body": "@inline421 " + body}).encode(),
                 headers={"Authorization": "Bearer " + TOKEN, "Accept": "application/vnd.github+json", "Content-Type": "application/json", "User-Agent": "game-watch"})
@@ -168,7 +168,7 @@ def main():
             last_wx = time.time()
             try:
                 for title, notes in wx.run(wxg, st, now()):
-                    if "level 2" in title: queue(title, notes, True)
+                    pass  # weather: state only, no alerts (pulse reads it)
             except Exception as e: print('wx err', str(e)[:80])
         flush(st)
         i += 1
