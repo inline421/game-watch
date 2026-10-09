@@ -33,7 +33,7 @@ def run(games, st, now):
         except Exception as e: print("wx fail", g["id"], str(e)[:60]); continue
         if r is None: continue
         lv, notes, h = r; prev = ws.get(g["id"], 0)
-        if lv > prev and lv >= 1:
-            out.append(("WEATHER %s level %d (kick in %.1fh)" % (g["id"], lv, h), notes))
+        if lv != prev:
+            out.append(("WEATHER %s level %d (kick in %.1fh)" % (g["id"], lv, h), notes, prev, lv))
         ws[g["id"]] = lv
     return out
