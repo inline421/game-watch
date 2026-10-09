@@ -95,6 +95,9 @@ def _post(title, body):
     except Exception as e: print("issue fail", str(e)[:80])
 
 def flush(st, pend):
+    if os.path.exists(os.path.join(HERE, "mailtest.flag")) and not st.get("_mt"):
+        st["_mt"] = 1
+        print("MAIL TEST", _mail("TEST: clean alerts are live", "This is a test. Real alerts will lead with the action, e.g. KILL / KEEP / SIZE UP, and only for games you hold."))
     for t, w, is_wx in [(p["t"], p["w"], p["wx"]) for p in pend]:
         if not is_wx: news(st, t, w)
     q = st.get("_rtq", [])
