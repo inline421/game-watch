@@ -3,7 +3,7 @@
 postponed/delayed, moved indoors / venue change, kickoff moved, big total move, NFL QB status. Alerts -> GitHub issue (@mention) + ntfy push."""
 import os, sys, json, time, re, hashlib, subprocess, urllib.request, urllib.parse, datetime as dt
 import xml.etree.ElementTree as ET
-import wx
+import wx, rt
 HERE = os.path.dirname(os.path.abspath(__file__))
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", "Accept": "application/json,text/xml,*/*"}
 ESPN = "https://site.api.espn.com/apis/site/v2/sports/football/%s"
@@ -31,7 +31,7 @@ def ab(x): return ALIAS.get(x, x)
 def now(): return dt.datetime.now(dt.timezone.utc)
 
 import zoneinfo
-ET = zoneinfo.ZoneInfo("America/New_York")
+TZ_ET = zoneinfo.ZoneInfo("America/New_York")
 PEND = []
 def _k(t): return re.sub(r"\(kick in [^)]*\)", "", t).strip()
 def queue(title, why, is_wx):
@@ -167,10 +167,10 @@ def main():
         if time.time() - last_wx > 600:
             last_wx = time.time()
             try:
-                for title, notes in wx.run(wxg, st, now()):
-                    pass  # weather: state only, no alerts (pulse reads it)
+                for title, notes, p0, p1 in wx.run(wxg, st, now()):
+                    rt.wx(st, title, notes, p0, p1)
             except Exception as e: print('wx err', str(e)[:80])
-        flush(st)
+        rt.flush(st, PEND); PEND.clear()
         i += 1
         if time.time() - last_save > 1800: save(st); last_save = time.time()
         if time.time() - t0 + POLL > LIVE: break
