@@ -30,7 +30,41 @@ def gj(u): return json.loads(get(u))
 def ab(x): return ALIAS.get(x, x)
 def now(): return dt.datetime.now(dt.timezone.utc)
 
-def notify(title, body):
+import zoneinfo
+ET = zoneinfo.ZoneInfo("America/New_York")
+PEND = []
+def _k(t): return re.sub(r"\(kick in [^)]*\)", "", t).strip()
+def queue(title, why, is_wx):
+    m = re.search(r"kick in (-?[\d.]+)h", title)
+    PEND.append({"t": title, "w": why[:3], "h": float(m.group(1)) if m else 99, "wx": is_wx})
+def flush(st):
+    """One batched alert, never at night: weather digests wait for 7 AM ET (max 1 per 3h); only non-weather news within 4h of kick is urgent."""
+    q = st.setdefault("_q", []); seen = {_k(x["t"]) for x in q}
+    for p in PEND:
+        if _k(p["t"]) not in seen: q.append(p); seen.add(_k(p["t"]))
+    PEND.clear()
+    if not q: return
+    n = now(); loc = n.astimezone(ET); quiet = loc.hour >= 22 or loc.hour < 7
+    urgent = any((not x["wx"]) and x["h"] <= 4 for x in q)
+    last = st.get("_dg"); cool = bool(last) and (n - dt.datetime.fromisoformat(last)).total_seconds() < 3 * 3600
+    if not urgent and (quiet or cool): return
+    items = []
+    for x in q:
+        if x["wx"]:
+            m = re.search(r"WEATHER (\S+) level", x["t"])
+            if m and st.get("_wx", {}).get(m.group(1), 0) < 2: continue
+        items.append(x)
+    st["_q"] = []; st["_dg"] = n.isoformat()
+    if not items: return
+    ids = [re.search(r"WEATHER (\S+) level", x["t"]).group(1) for x in items if x["wx"] and re.search(r"WEATHER (\S+) level", x["t"])]
+    oth = [x for x in items if not x["wx"]]
+    parts = []
+    if ids: parts.append("WEATHER level 2: " + ", ".join(ids[:4]) + (" +%d more" % (len(ids) - 4) if len(ids) > 4 else ""))
+    for x in oth[:2]: parts.append("%s: %s" % (x["t"].split(" (kick")[0], x["w"][0][:50]))
+    body = "\n".join("**%s**\n" % x["t"] + "\n".join("- " + w for w in x["w"]) + "\n" for x in items)
+    send_now("DRASTIC CHANGE ALERT: " + " | ".join(parts), body)
+
+def send_now(title, body):
     if TOKEN:
         try:
             req = urllib.request.Request("https://api.github.com/repos/%s/issues" % REPO, data=json.dumps({"title": title[:200], "body": "@inline421 " + body}).encode(),
@@ -129,13 +163,14 @@ def main():
             try: hl["inj"]["nfl"] = {t["displayName"]: t["injuries"] for t in gj(ESPN % "nfl" + "/injuries")["injuries"]}
             except Exception as e: print("inj fail", str(e)[:60])
         for title, why in check(act, st, sb, hl):
-            notify("DRASTIC CHANGE ALERT: %s - %s" % (title, why[0]), "**%s**\n\n" % title + "\n".join("- " + w for w in why))
+            queue(title, why, False)
         if time.time() - last_wx > 600:
             last_wx = time.time()
             try:
                 for title, notes in wx.run(wxg, st, now()):
-                    notify('DRASTIC CHANGE ALERT: ' + title, '**%s**\n\n' % title + '\n'.join('- ' + w for w in notes))
+                    if "level 2" in title: queue(title, notes, True)
             except Exception as e: print('wx err', str(e)[:80])
+        flush(st)
         i += 1
         if time.time() - last_save > 1800: save(st); last_save = time.time()
         if time.time() - t0 + POLL > LIVE: break
