@@ -69,7 +69,23 @@ def _news_msg(it):
     if k == "head": return ("NEWS: %s" % gid, "%s. Check %s." % (it["w"][:110], nm(bets)))
     return None
 
+def _mail(title, body):
+    """Direct Gmail (SMTP app password in repo secrets GMAIL_USER / GMAIL_APP_PASSWORD). Returns True if sent."""
+    u, p = os.environ.get("GMAIL_USER", ""), os.environ.get("GMAIL_APP_PASSWORD", "")
+    if not (u and p): return False
+    try:
+        import smtplib
+        from email.message import EmailMessage
+        m = EmailMessage(); m["Subject"] = title[:200]; m["From"] = "Sharp Sheet Alerts <%s>" % u; m["To"] = u
+        m["X-Priority"] = "1"; m.set_content(body.replace("**", ""))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s:
+            s.login(u, p.replace(" ", "")); s.send_message(m)
+        return True
+    except Exception as e:
+        print("mail fail", str(e)[:80]); return False
+
 def _post(title, body):
+    if _mail(title, body): return
     if not TOKEN: print("no token"); return
     try:
         req = urllib.request.Request("https://api.github.com/repos/%s/issues" % REPO,
@@ -101,5 +117,5 @@ def flush(st, pend):
     st["_rtq"] = keep
     if not msgs: return
     title = msgs[0][1][0] + (" (+%d more)" % (len(msgs) - 1) if len(msgs) > 1 else "")
-    body = "\n\n".join("**%s**\n%s" % m for _, m in msgs)
+    body = "\n\n".join("%s\n%s" % (m[0], m[1]) for _, m in msgs)
     _post(title, body); print("RT ALERT", title)
