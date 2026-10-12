@@ -21,10 +21,12 @@ SPORTS = {  # label: (odds-api sport key, kalshi series prefix)
     "NBA": ("basketball_nba", "KXNBA"),
 }
 HORIZON_H = 30            # only games starting in the next 30h
-MAX_EVENTS = int(os.environ.get("MAX_EVENTS", "30"))  # alt-line pulls per run (4 credits each)
+MAX_EVENTS = int(os.environ.get("MAX_EVENTS", "4"))   # games pulled per day (3 credits each)
+MAX_LEGS = int(os.environ.get("MAX_LEGS", "20"))      # heavy-favorite legs logged per day
+PER_GAME = 5                                          # max legs kept per game
 CREDIT_FLOOR = int(os.environ.get("CREDIT_FLOOR", "2000"))  # never drain the shared key below this
 HEAVY = -200              # leg qualifies if a book prices it -200 or shorter
-FLOOR = -3000
+FLOOR = -1500             # ignore near-locks heavier than this
 BOOKS = ("fanduel", "draftkings")
 FIELDS = ["ts_utc", "sport", "game", "kickoff_et", "leg", "kalshi_ticker", "kalshi_side",
           "kalshi_ask", "kalshi_dec", "kalshi_net_dec", "fd_price", "fd_dec", "dk_price", "dk_dec"]
@@ -131,32 +133,33 @@ def scan():
     now = dt.datetime.now(dt.timezone.utc)
     t_to = now + dt.timedelta(hours=HORIZON_H)
     fmt = lambda t: t.strftime("%Y-%m-%dT%H:%M:%SZ")
-    rows, pulls = [], 0
+    rows, pulls, cands = [], 0, {}
     for label, (okey, kpre) in SPORTS.items():
         kev = load_kalshi(kpre)
         if not kev:
             continue
         base = get(f"{OA}/sports/{okey}/odds?apiKey={KEY}&regions=us&markets=h2h&oddsFormat=american"
                    f"&bookmakers={','.join(BOOKS)}&commenceTimeFrom={fmt(now)}&commenceTimeTo={fmt(t_to)}")
-        if not base:
-            continue
-        for g in sorted(base, key=lambda x: x["commence_time"]):
-            if pulls >= MAX_EVENTS or (credits_left is not None and credits_left < CREDIT_FLOOR):
-                break
+        for g in sorted(base or [], key=lambda x: x["commence_time"]):
             ko = dt.datetime.fromisoformat(g["commence_time"].replace("Z", "+00:00")).astimezone(ET)
             teams = [g["home_team"], g["away_team"]]
-            match = None
             for k, e in kev.items():
                 if e["date"] != ko.date() or len(set(e["teams"])) < 2:
                     continue
-                mapped = {find_team(t, teams) for t in set(e["teams"])}
-                if mapped == set(teams):
-                    match = e
+                if {find_team(t, teams) for t in set(e["teams"])} == set(teams):
+                    cands.setdefault(label, []).append((okey, g, ko, teams, e))
                     break
-            if not match:
-                continue
+    picks = []  # round-robin across sports so the day's legs span sports/games
+    while len(picks) < MAX_EVENTS and any(cands.values()):
+        for label in list(cands):
+            if cands[label] and len(picks) < MAX_EVENTS:
+                picks.append((label,) + cands[label].pop(0))
+    for label, okey, g, ko, teams, match in picks:
+        if len(rows) >= MAX_LEGS or (credits_left is not None and credits_left < CREDIT_FLOOR):
+            break
+        if True:
             od = get(f"{OA}/sports/{okey}/events/{g['id']}/odds?apiKey={KEY}&regions=us&oddsFormat=american"
-                     f"&markets=h2h,spreads,totals,alternate_spreads,alternate_totals&bookmakers={','.join(BOOKS)}")
+                     f"&markets=h2h,alternate_spreads,alternate_totals&bookmakers={','.join(BOOKS)}")
             pulls += 1
             if not od:
                 continue
@@ -168,6 +171,7 @@ def scan():
                     for o in mk["outcomes"]:
                         px[(b["key"], kind, o["name"], o.get("point"))] = o["price"]
             game = f"{g['away_team']} @ {g['home_team']}"
+            glegs = []
             for kind, kname, line, m in match["markets"]:
                 legs = []
                 if kind == "ML":
@@ -192,7 +196,7 @@ def scan():
                     prices = [p for p in (fd, dk) if p is not None]
                     if not prices or min(prices) > HEAVY or min(prices) < FLOOR:
                         continue
-                    rows.append({
+                    glegs.append({
                         "ts_utc": fmt(now), "sport": label, "game": game,
                         "kickoff_et": ko.strftime("%Y-%m-%d %H:%M"), "leg": desc,
                         "kalshi_ticker": m["ticker"], "kalshi_side": side, "kalshi_ask": a,
@@ -200,6 +204,9 @@ def scan():
                         "fd_price": fd if fd is not None else "", "fd_dec": round(am_to_dec(fd), 4) if fd is not None else "",
                         "dk_price": dk if dk is not None else "", "dk_dec": round(am_to_dec(dk), 4) if dk is not None else "",
                     })
+            glegs.sort(key=lambda r: min(p for p in (r["fd_price"], r["dk_price"]) if p != ""))
+            step = max(1, len(glegs) // PER_GAME)
+            rows += glegs[::step][:PER_GAME][:MAX_LEGS - len(rows)]
     os.makedirs(os.path.dirname(DATA), exist_ok=True)
     new = not os.path.exists(DATA)
     with open(DATA, "a", newline="") as f:
@@ -216,40 +223,44 @@ def gmean(xs):
 
 
 def summary(days=7):
-    if not os.path.exists(DATA):
-        body, subj = "No data logged yet.", "PARLAY STUDY: no data yet"
-    else:
+    import itertools, random
+    rows = []
+    if os.path.exists(DATA):
         cut = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
         rows = [r for r in csv.DictReader(open(DATA))
                 if dt.datetime.strptime(r["ts_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc) >= cut]
-        lines = []
-        head = None
-        for book, col in (("FanDuel", "fd_dec"), ("DraftKings", "dk_dec")):
-            pr = [(float(r["kalshi_net_dec"]), float(r[col])) for r in rows if r[col]]
-            if not pr:
-                continue
-            ratio = gmean([k / b for k, b in pr])
-            wins = sum(1 for k, b in pr if k > b) / len(pr)
-            bdec = gmean([b for _, b in pr])
-            p3_book, p3_k = bdec ** 3, (bdec * ratio) ** 3
-            profit_gain = (p3_k - 1) / (p3_book - 1) - 1
-            lines.append(f"- vs {book}: Kalshi (after fee) paid more on {wins:.0%} of {len(pr)} legs; "
-                         f"typical 3-leg parlay {p3_book:.2f}x on {book} vs {p3_k:.2f}x on Kalshi "
-                         f"({profit_gain:+.0%} profit)")
-            if head is None or profit_gain > head[1]:
-                head = (book, profit_gain)
-        by = {}
-        for r in rows:
-            if r["fd_dec"]:
-                by.setdefault(r["sport"], []).append(float(r["kalshi_net_dec"]) / float(r["fd_dec"]))
-        for s, xs in sorted(by.items()):
-            lines.append(f"- {s}: per-leg Kalshi vs FanDuel {gmean(xs) - 1:+.1%} ({len(xs)} legs)")
-        if head:
-            verdict = "KALSHI PAYS MORE" if head[1] > 0 else "BOOKS PAY MORE"
-            subj = f"PARLAY STUDY: {verdict} on heavy-favorite parlays ({head[1]:+.0%} profit vs {head[0]})"
-        else:
-            subj = "PARLAY STUDY: no matched legs this week"
-        body = "\n".join(lines) + "\n\nKalshi priced from single-leg asks incl. approx. fee; actual Kalshi combo quotes can differ."
+    # build 3-leg parlays from each day's legs (different games, all 3 venues priced)
+    rnd, pars = random.Random(42), []
+    byday = {}
+    for r in rows:
+        if r["fd_dec"] and r["dk_dec"]:
+            byday.setdefault(r["ts_utc"][:10], []).append(r)
+    for day, legs in byday.items():
+        combos = [c for c in itertools.combinations(legs, 3) if len({x["game"] for x in c}) == 3]
+        for c in rnd.sample(combos, min(10, len(combos))):
+            k = math.prod(float(x["kalshi_net_dec"]) for x in c)
+            fd = math.prod(float(x["fd_dec"]) for x in c)
+            dk = math.prod(float(x["dk_dec"]) for x in c)
+            pars.append((k, fd, dk, c))
+    if not pars:
+        subj, body = "PARLAY STUDY: not enough legs yet", f"{len(rows)} legs logged this week; need legs from 3+ games priced at all three venues."
+    else:
+        n = len(pars)
+        kwin = sum(1 for k, fd, dk, _ in pars if k > max(fd, dk)) / n
+        gfd = gmean([(k - 1) / (fd - 1) for k, fd, dk, _ in pars]) - 1
+        gdk = gmean([(k - 1) / (dk - 1) for k, fd, dk, _ in pars]) - 1
+        avg = lambda i: sum(p[i] for p in pars) / n
+        best = max(pars, key=lambda p: p[0] / max(p[1], p[2]))
+        verdict = "KALSHI PAYS MORE" if min(gfd, gdk) > 0 else ("BOOKS PAY MORE" if max(gfd, gdk) < 0 else "MIXED")
+        subj = f"PARLAY STUDY: {verdict} ({gfd:+.0%} profit vs FanDuel, {gdk:+.0%} vs DraftKings)"
+        body = "\n".join([
+            f"- {n} three-leg heavy-favorite parlays tested this week ({len(rows)} legs logged)",
+            f"- Kalshi paid the most on {kwin:.0%} of them",
+            f"- Avg payout: Kalshi {avg(0):.2f}x | FanDuel {avg(1):.2f}x | DraftKings {avg(2):.2f}x",
+            "- Biggest gap: " + " + ".join(x["leg"] for x in best[3])
+            + f" -> Kalshi {best[0]:.2f}x vs FanDuel {best[1]:.2f}x / DraftKings {best[2]:.2f}x",
+            "",
+            "Kalshi priced from single-leg asks incl. approx. fee; real Kalshi combo quotes can differ."])
     print(subj + "\n" + body)
     u, p = os.environ.get("GMAIL_USER"), os.environ.get("GMAIL_APP_PASSWORD")
     if u and p:
