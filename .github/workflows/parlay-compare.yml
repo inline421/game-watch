@@ -1,0 +1,37 @@
+name: parlay-compare
+on:
+  schedule:
+    - cron: '30 15 * * *'   # daily scan 11:30 AM ET
+    - cron: '0 13 * * 1'    # weekly summary email Mon 9:00 AM ET
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: scan or summary
+        default: scan
+permissions:
+  contents: write
+concurrency:
+  group: parlay-compare
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python parlay/compare.py ${{ github.event.schedule == '0 13 * * 1' && 'summary' || inputs.mode || 'scan' }}
+      - name: Save data
+        run: |
+          git config user.name "parlay-bot"
+          git config user.email "parlay-bot@users.noreply.github.com"
+          git add parlay/data || true
+          git diff --cached --quiet && exit 0
+          git commit -m "parlay data $(date -u +%F)"
+          for i in 1 2 3; do git pull --rebase && git push && break; sleep 5; done
