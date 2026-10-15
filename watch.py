@@ -3,7 +3,7 @@
 postponed/delayed, moved indoors / venue change, kickoff moved, big total move, NFL QB status. Alerts -> GitHub issue (@mention) + ntfy push."""
 import os, sys, json, time, re, hashlib, subprocess, urllib.request, urllib.parse, datetime as dt
 import xml.etree.ElementTree as ET
-import wx, rt
+import wx, rt, h1close
 HERE = os.path.dirname(os.path.abspath(__file__))
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", "Accept": "application/json,text/xml,*/*"}
 ESPN = "https://site.api.espn.com/apis/site/v2/sports/football/%s"
@@ -164,6 +164,8 @@ def main():
             except Exception as e: print("inj fail", str(e)[:60])
         for title, why in check(act, st, sb, hl):
             queue(title, why, False)
+        try: h1close.run(st, sb, now())
+        except Exception as e: print('h1 err', str(e)[:80])
         if time.time() - last_wx > 600:
             last_wx = time.time()
             try:
