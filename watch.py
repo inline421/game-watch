@@ -138,6 +138,8 @@ def check(games, st, sb_cache, hl):
                     for t in new[:3]: why.append("HEADLINE: " + t[:140])
             except Exception as e: print("news fail", key, str(e)[:60])
         st[key] = cur
+        try: rt.prekick(st, key, "%s@%s" % (away, home), h, cur, od)
+        except Exception as e: print("prekick err", str(e)[:80])
         if why: out.append(("%s @ %s (kick in %.1fh)" % (away, home, h), why))
     return out
 
@@ -149,11 +151,17 @@ def save(st):
 def main():
     games = json.load(open(os.path.join(HERE, "games.json")))
     st = json.load(open(SF)) if os.path.exists(SF) else {}
-    t0 = time.time(); last_save = t0; i = 0; last_wx = 0
+    t0 = time.time(); last_save = t0; i = 0; last_wx = 0; last_disc = 0; disc = []
     wxg = json.load(open(os.path.join(HERE, 'wx_games.json')))
     while True:
         n = now(); today = (n - dt.timedelta(hours=10)).strftime("%Y-%m-%d"); hor = (n + dt.timedelta(days=3)).strftime("%Y-%m-%d")
         act = [g for g in games if today <= g["date"] <= hor]
+        if time.time() - last_disc > 600:
+            last_disc = time.time()
+            try: disc = rt.discover(gj, ESPN, today, hor)
+            except Exception as e: print("disc err", str(e)[:80])
+        have = {(g["league"], g["away"], g["home"], g["date"]) for g in act}
+        act = act + [g for g in disc if (g["league"], g["away"], g["home"], g["date"]) not in have]
         sb = {}; hl = {"inj": {}, "news": i % 4 == 0}
         for lg, d in {(g["league"], g["date"]) for g in act}:
             try:
