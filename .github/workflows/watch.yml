@@ -27,4 +27,5 @@ jobs:
           LIVE_SECONDS: ${{ github.event.inputs.live_seconds || '20400' }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: python3 watch.py
