@@ -94,6 +94,50 @@ def _post(title, body):
         urllib.request.urlopen(req, timeout=25).read()
     except Exception as e: print("issue fail", str(e)[:80])
 
+def discover(gj, espn, today, hor):
+    """Held games missing from games.json (stale since 10/11): find them on the ESPN scoreboards today..hor so
+    real-time alerts, pre-kick checks and 1H closes cover EVERY held play (added 10/15, rules audit)."""
+    out = []
+    d0 = dt.date.fromisoformat(today); d1 = dt.date.fromisoformat(hor)
+    for i in range((d1 - d0).days + 1):
+        d = (d0 + dt.timedelta(days=i)).isoformat()
+        for lg in ("nfl", "college-football"):
+            try: evs = gj((espn % lg) + "/scoreboard?dates=%s&limit=400%s" % (d.replace("-", ""), "&groups=80" if lg != "nfl" else "")).get("events", [])
+            except Exception as e: print("disc fail", lg, d, str(e)[:60]); continue
+            for e in evs:
+                c = e["competitions"][0]; ab = {x["homeAway"]: x["team"]["abbreviation"] for x in c["competitors"]}
+                if "%s@%s" % (ab.get("away"), ab.get("home")) in HELD:
+                    out.append({"league": lg, "away": ab["away"], "home": ab["home"], "date": d})
+    return out
+
+def prekick(st, key, gid, h, cur, od):
+    """Rule (rules-index): pre-kick check 1h before EVERY held play on every day + closing-line snapshot for CLV.
+    Queues one 'pk' item when kick is 45-78 min away; records the last ESPN odds read before kick under st['_close'] (provider named)."""
+    if gid not in HELD: return
+    pk = st.setdefault("_pk", {})
+    if 0.75 <= h <= 1.3 and key not in pk:
+        pk[key] = _now().isoformat()
+        st.setdefault("_rtq", []).append({"k": "pk|" + key, "gid": gid, "t": _now().isoformat(), "kind": "pk", "h": round(h, 2),
+            "status": cur.get("status"), "indoor": cur.get("indoor"), "qb": cur.get("inj") or {}, "wxlv": st.get("_wx", {}).get(gid)})
+    if -0.02 <= h <= 0.25:
+        cl = st.setdefault("_close", {})
+        if h > 0 or key not in cl:
+            cl[key] = {"at": _now().isoformat(), "mins_to_kick": round(h * 60, 1), "total": od.get("overUnder"), "spread": od.get("spread"),
+                       "details": od.get("details"), "provider": (od.get("provider") or {}).get("name")}
+
+def _pk_msg(it):
+    gid = it["gid"]; bets = HELD[gid]; nm = ", ".join(b["b"] for b in bets)
+    stt = (it.get("status") or "").upper(); lv = it.get("wxlv")
+    outq = [n for n, s in (it.get("qb") or {}).items() if str(s).lower() in ("out", "doubtful", "injured reserve", "suspended", "inactive")]
+    flags = []
+    if any(x in stt for x in ("POSTPONED", "CANCEL", "DELAY", "SUSPEND")): flags.append("game status " + stt)
+    if it.get("indoor") and any(b.get("wx") for b in bets): flags.append("game is indoors, weather edge is dead")
+    if outq: flags.append("QB OUT: " + ", ".join(outq))
+    if lv is not None and lv < 1 and any(b.get("wx") for b in bets): flags.append("weather edge faded (level %s)" % lv)
+    wxs = "weather level %s of 2" % lv if lv is not None else "no weather read"
+    if flags: return ("PRE-KICK FLAG %s: %s" % (gid, "; ".join(flags)), "Check %s now, before kick (HEDGE OUT or KILL if the reason no longer holds)." % nm)
+    return ("PRE-KICK OK %s (~%d min to kick)" % (gid, int(it["h"] * 60)), "KEEP %s. Status %s, %s, no QB-out report." % (nm, stt or "n/a", wxs))
+
 def flush(st, pend):
     if os.path.exists(os.path.join(HERE, "mailtest.flag")) and not st.get("_mt"):
         st["_mt"] = 1
@@ -107,6 +151,9 @@ def flush(st, pend):
     sent = st.setdefault("_rtsent", {}); keep = []; msgs = []
     for it in q:
         age = (n - dt.datetime.fromisoformat(it["t"])).total_seconds() / 60
+        if it["kind"] == "pk":
+            if age > 90 or it["k"] in sent: continue  # stale (overnight hold / restart) or already sent
+            msgs.append((it, _pk_msg(it))); sent[it["k"]] = n.isoformat(); continue
         if it["kind"] == "wx":
             if age < HOLD_MIN: keep.append(it); continue
             if st.get("_wx", {}).get(it["gid"]) != it["lv"]: continue  # reverted: drop
