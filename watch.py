@@ -27,6 +27,28 @@ def get(url, tries=2):
         except Exception as e: last = e; time.sleep(2)
     raise last
 def gj(u): return json.loads(get(u))
+
+def starter_qb(x, hl):
+    """Name of the team's starting QB: ESPN depth chart (first QB listed, cached per loop), else the scoreboard passing leader, else None.
+    Jarred 10/15: a backup QB out is NEVER an alert."""
+    tid = str((x.get("team") or {}).get("id", ""))
+    dc = hl.setdefault("dc", {})
+    if tid and tid not in dc:
+        nm = None
+        try:
+            for g in gj((ESPN % "nfl") + "/teams/%s/depthcharts" % tid).get("depthchart", []):
+                for k, p in (g.get("positions") or {}).items():
+                    if ((p.get("position") or {}).get("abbreviation") or k).upper() == "QB" and p.get("athletes"):
+                        nm = p["athletes"][0].get("displayName"); break
+                if nm: break
+        except Exception as e: print("dc fail", tid, str(e)[:60])
+        dc[tid] = nm
+    nm = dc.get(tid)
+    if not nm:
+        for l in x.get("leaders") or []:
+            if l.get("name") in ("passingLeader", "passingYards") and l.get("leaders"):
+                nm = (l["leaders"][0].get("athlete") or {}).get("displayName"); break
+    return nm
 def ab(x): return ALIAS.get(x, x)
 def now(): return dt.datetime.now(dt.timezone.utc)
 
@@ -112,9 +134,13 @@ def check(games, st, sb_cache, hl):
         if lg == "nfl" and "nfl" in hl["inj"]:
             snap = {}
             for x in comp["competitors"]:
+                st1 = starter_qb(x, hl)
                 for r in hl["inj"]["nfl"].get(x["team"]["displayName"], []):
                     a = r.get("athlete", {}); pos = (a.get("position") or {}).get("displayName", "")
-                    if pos == "Quarterback": snap[a.get("displayName", "")] = r.get("status", "")
+                    if pos != "Quarterback": continue
+                    nm = a.get("displayName", "")
+                    if st1 and nm != st1: continue  # backup QB: log only, never alert
+                    snap[nm] = r.get("status", "")
             if s0.get("inj") is not None:
                 for nm, stt in snap.items():
                     if s0["inj"].get(nm) != stt and stt.lower() in BAD_INJ: why.append("QB %s now %s" % (nm, stt.upper()))
