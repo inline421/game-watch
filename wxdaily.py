@@ -69,6 +69,7 @@ def run(now=None):
                     if not ll: row["err"] = "geocode failed"; games.append(row); continue
                     row["models"], row["level"] = window(ll[0], ll[1], kick)
                     try:
+                        if kick - now > dt.timedelta(hours=12): raise ValueError('alerts only count within 12h of kick')
                         al = [f["properties"].get("event", "") for f in g("https://api.weather.gov/alerts/active?point=%s,%s" % (ll[0], ll[1])).get("features", [])]
                         sev = [a for a in al if any(s in a for s in SEV)]
                         if sev: row["nws_alerts"] = sev; row["level"] = max(row["level"], 2)
