@@ -11,9 +11,16 @@ ESPN = "https://site.api.espn.com/apis/site/v2/sports/football/%s/scoreboard?dat
 MODELS = ["ecmwf_ifs025", "gfs_seamless", "icon_seamless"]
 SEV = ("Tornado", "Severe Thunderstorm", "Flood", "High Wind", "Hurricane", "Tropical", "Lightning", "Extreme Wind", "Blizzard", "Winter Storm", "Ice Storm")
 
-def g(u):
-    with urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=30) as r:
-        return json.loads(r.read().decode())
+def g(u, tries=3):
+    last = None
+    for i in range(tries):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=30) as r:
+                return json.loads(r.read().decode())
+        except Exception as e:
+            last = e
+            import time; time.sleep(2 + 3 * i)
+    raise last
 
 def geo(city, state, cache):
     k = "%s, %s" % (city, state)
@@ -35,11 +42,10 @@ def window(lat, lon, kick):
         per[m.split("_")[0]] = {"wind": round(sum(w) / len(w), 1) if w else None, "gust_max": max(gu) if gu else None,
                                "rain_in": round(sum(pr), 2) if pr else None, "temp": round(sum(te) / len(te)) if te else None,
                                "tstorm": any((x or 0) >= 95 for x in col("weather_code"))}
-    hits = 0
-    for v in per.values():
-        if (v["gust_max"] or 0) >= 30 or (v["rain_in"] or 0) >= 0.4 or v["tstorm"]: hits += 2
-        elif (v["gust_max"] or 0) >= 22 or (v["rain_in"] or 0) >= 0.12: hits += 1
-    return per, (2 if hits >= 4 else 1 if hits >= 2 else 0)
+    # betting-relevant: sustained wind drives totals more than one-hour gust spikes; need 2 of 3 models to agree
+    major = sum(1 for v in per.values() if (v["wind"] or 0) >= 20 or (v["rain_in"] or 0) >= 0.3 or v["tstorm"])
+    notable = sum(1 for v in per.values() if (v["wind"] or 0) >= 15 or (v["gust_max"] or 0) >= 35 or (v["rain_in"] or 0) >= 0.1)
+    return per, (2 if major >= 2 else 1 if notable >= 2 else 0)
 
 def run(now=None):
     now = now or dt.datetime.now(dt.timezone.utc)
@@ -76,7 +82,7 @@ def run(now=None):
         if r["game"] + r["kick"] in seen: continue
         seen.add(r["game"] + r["kick"]); uniq.append(r)
     uniq.sort(key=lambda r: (-(r.get("level") or 0), r["kick"]))
-    json.dump({"generated": now.strftime("%Y-%m-%dT%H:%MZ"), "levels": "0 calm, 1 notable, 2 major (gust>=30mph / rain>=0.4in / t-storm in 2+ models, or NWS severe alert)", "games": uniq}, open(OUT, "w"), separators=(",", ":"))
+    json.dump({"generated": now.strftime("%Y-%m-%dT%H:%MZ"), "levels": "0 calm; 1 notable = 2+ models: sustained wind >=15 mph or gust >=35 or rain >=0.1in; 2 major = 2+ models: sustained wind >=20 or rain >=0.3in or t-storm, or NWS severe alert", "games": uniq}, open(OUT, "w"), separators=(",", ":"))
     return len(uniq)
 
 if __name__ == "__main__":
