@@ -139,7 +139,7 @@ def check(games, st, sb_cache, hl):
                     a = r.get("athlete", {}); pos = (a.get("position") or {}).get("displayName", "")
                     if pos != "Quarterback": continue
                     nm = a.get("displayName", "")
-                    if st1 and nm != st1: continue  # backup QB: log only, never alert
+                    if not st1 or nm != st1: continue  # backup QB or unknown starter: log only, never alert (fail closed)
                     snap[nm] = r.get("status", "")
             if s0.get("inj") is not None:
                 for nm, stt in snap.items():
