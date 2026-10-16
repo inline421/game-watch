@@ -16,15 +16,16 @@ def wx(st, title, notes, p0, p1):
     m = re.match(r"WEATHER (\S+) level \d \(kick in (-?[\d.]+)h", title)
     if not m: return
     gid, h = m.group(1), float(m.group(2))
-    if gid not in HELD or h > 40 or h < -3: return
+    if gid not in HELD or h > 40 or h <= 0: return  # no alerts once the game has kicked off
     ref = st.setdefault("_wxref", {}).setdefault(gid, p0)
-    st.setdefault("_rtq", []).append({"k": "wx|%s" % gid, "gid": gid, "t": _now().isoformat(), "kind": "wx", "ref": ref, "lv": p1})
+    st.setdefault("_rtq", []).append({"k": "wx|%s" % gid, "gid": gid, "t": _now().isoformat(), "kind": "wx", "ref": ref, "lv": p1, "ko": (_now() + dt.timedelta(hours=h)).isoformat()})
 
 def news(st, title, why):
     m = re.match(r"(\S+) @ (\S+) \(kick in (-?[\d.]+)h", title)
     if not m: return
     gid = "%s@%s" % (m.group(1), m.group(2))
-    if gid not in HELD: return
+    kh = float(m.group(3))
+    if gid not in HELD or kh <= 0: return  # no alerts once the game has kicked off
     for w in why:
         U = w.upper()
         if U.startswith("GAME STATUS"): kind = "post"
@@ -32,9 +33,8 @@ def news(st, title, why):
         elif U.startswith("VENUE CHANGED"): kind = "venue"
         elif U.startswith("KICKOFF MOVED"): kind = "kick"
         elif U.startswith("QB "): kind = "qb"
-        elif U.startswith("HEADLINE") and re.search(r"moved indoors|relocat|postpon|ruled out|inactive|will not play", w, re.I): kind = "head"
         else: continue
-        st.setdefault("_rtq", []).append({"k": "%s|%s|%s" % (kind, gid, w[:40]), "gid": gid, "t": _now().isoformat(), "kind": kind, "w": w})
+        st.setdefault("_rtq", []).append({"k": "%s|%s|%s" % (kind, gid, w[:40]), "gid": gid, "t": _now().isoformat(), "kind": kind, "w": w, "ko": (_now() + dt.timedelta(hours=kh)).isoformat()})
 
 def _wx_msg(it, st):
     gid, ref, lv = it["gid"], it["ref"], it["lv"]
@@ -66,7 +66,6 @@ def _news_msg(it):
         if O: out.append("HEDGE OUT %s" % nm(O))
         if not out: out.append("re-check %s" % nm(bets))
         return ("QB OUT: %s (%s)" % (gid, p), "; ".join(out) + ". Scoring drops with a backup QB.")
-    if k == "head": return ("NEWS: %s" % gid, "%s. Check %s." % (it["w"][:110], nm(bets)))
     return None
 
 def _mail(title, body):
@@ -151,6 +150,7 @@ def flush(st, pend):
     sent = st.setdefault("_rtsent", {}); keep = []; msgs = []
     for it in q:
         age = (n - dt.datetime.fromisoformat(it["t"])).total_seconds() / 60
+        if it["kind"] != "pk" and it.get("ko") and n >= dt.datetime.fromisoformat(it["ko"]): continue  # game already kicked off: drop
         if it["kind"] == "pk":
             if age > 90 or it["k"] in sent: continue  # stale (overnight hold / restart) or already sent
             msgs.append((it, _pk_msg(it))); sent[it["k"]] = n.isoformat(); continue
