@@ -153,7 +153,9 @@ def flush(st, pend):
         if it["kind"] != "pk" and it.get("ko") and n >= dt.datetime.fromisoformat(it["ko"]): continue  # game already kicked off: drop
         if it["kind"] == "pk":
             if age > 90 or it["k"] in sent: continue  # stale (overnight hold / restart) or already sent
-            msgs.append((it, _pk_msg(it))); sent[it["k"]] = n.isoformat(); continue
+            _m = _pk_msg(it); sent[it["k"]] = n.isoformat()
+            if not _m[0].startswith("PRE-KICK OK"): msgs.append((it, _m))   # 11/10 email noise: only FLAGs mail; the OK is still recorded in _pk/_rtsent
+            continue
         if it["kind"] == "wx":
             if age < HOLD_MIN: keep.append(it); continue
             if st.get("_wx", {}).get(it["gid"]) != it["lv"]: continue  # reverted: drop
