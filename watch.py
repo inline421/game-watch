@@ -56,6 +56,9 @@ import zoneinfo
 TZ_ET = zoneinfo.ZoneInfo("America/New_York")
 PEND = []
 def _k(t): return re.sub(r"\(kick in [^)]*\)", "", t).strip()
+def _et(s):
+    try: return dt.datetime.strptime(s, "%Y-%m-%dT%H:%MZ").replace(tzinfo=dt.timezone.utc).astimezone(zoneinfo.ZoneInfo("America/New_York")).strftime("%a %-I:%M %p ET")
+    except Exception: return s
 def queue(title, why, is_wx):
     m = re.search(r"kick in (-?[\d.]+)h", title)
     PEND.append({"t": title, "w": why[:3], "h": float(m.group(1)) if m else 99, "wx": is_wx})
@@ -126,7 +129,7 @@ def check(games, st, sb_cache, hl):
         if s0.get("venue") is not None:
             if cur["indoor"] and not s0.get("indoor"): why.append("MOVED INDOORS (%s -> %s)" % (s0["venue"], cur["venue"]))
             elif cur["venue"] and cur["venue"] != s0["venue"]: why.append("VENUE CHANGED %s -> %s" % (s0["venue"], cur["venue"]))
-            if cur["kick"] != s0["kick"]: why.append("KICKOFF MOVED %s -> %s (UTC)" % (s0["kick"], cur["kick"]))
+            if cur["kick"] != s0["kick"]: why.append("KICKOFF MOVED %s -> %s" % (_et(s0["kick"]), _et(cur["kick"])))
             if cur["total"] and s0.get("total") and abs(cur["total"] - s0["total"]) >= 2: why.append("TOTAL MOVED %s -> %s" % (s0["total"], cur["total"]))
         cur["base_total"] = s0.get("base_total") or cur["total"]
         if cur["total"] and cur["base_total"] and abs(cur["total"] - cur["base_total"]) >= 3 and not any(w.startswith("TOTAL") for w in why) and cur["total"] != s0.get("total"):
