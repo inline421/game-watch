@@ -1,1 +1,1 @@
-asOf 2026-11-17 11:20 PM ET | seeded by nightly fix builder (To Foreman row 222 c); every publish overwrites this line | see commit
+asOf 2026-11-19 03:10 PM ET | 2 pending picks | d89e6de
