@@ -9,7 +9,8 @@ CACHE = os.path.join(HERE, "venue_geo.json")
 UA = {"User-Agent": "game-watch (github.com/inline421/game-watch)", "Accept": "application/json"}
 ESPN = "https://site.api.espn.com/apis/site/v2/sports/football/%s/scoreboard?dates=%s&limit=400%s"
 MODELS = ["ecmwf_ifs025", "gfs_seamless", "icon_seamless"]
-SEV = ("Tornado", "Severe Thunderstorm", "Flood", "High Wind", "Hurricane", "Tropical", "Lightning", "Extreme Wind", "Blizzard", "Winter Storm", "Ice Storm")
+STATES = {"AL":"Alabama","AK":"Alaska","AZ":"Arizona","AR":"Arkansas","CA":"California","CO":"Colorado","CT":"Connecticut","DE":"Delaware","FL":"Florida","GA":"Georgia","HI":"Hawaii","ID":"Idaho","IL":"Illinois","IN":"Indiana","IA":"Iowa","KS":"Kansas","KY":"Kentucky","LA":"Louisiana","ME":"Maine","MD":"Maryland","MA":"Massachusetts","MI":"Michigan","MN":"Minnesota","MS":"Mississippi","MO":"Missouri","MT":"Montana","NE":"Nebraska","NV":"Nevada","NH":"New Hampshire","NJ":"New Jersey","NM":"New Mexico","NY":"New York","NC":"North Carolina","ND":"North Dakota","OH":"Ohio","OK":"Oklahoma","OR":"Oregon","PA":"Pennsylvania","RI":"Rhode Island","SC":"South Carolina","SD":"South Dakota","TN":"Tennessee","TX":"Texas","UT":"Utah","VT":"Vermont","VA":"Virginia","WA":"Washington","WV":"West Virginia","WI":"Wisconsin","WY":"Wyoming","DC":"District of Columbia"}
+SEV = ("Tornado", "Severe Thunderstorm", "Flash Flood", "High Wind", "Hurricane", "Tropical", "Lightning", "Extreme Wind", "Blizzard", "Winter Storm", "Ice Storm")
 
 def g(u, tries=3):
     last = None
@@ -23,10 +24,13 @@ def g(u, tries=3):
     raise last
 
 def geo(city, state, cache):
-    k = "%s, %s" % (city, state)
+    k = "v2|%s, %s" % (city, state)
     if k in cache: return cache[k]
-    r = g("https://geocoding-api.open-meteo.com/v1/search?count=5&country=US&name=" + urllib.parse.quote(city)).get("results") or []
-    pick = next((x for x in r if state and (x.get("admin1_code") == state or x.get("admin1", "").lower().startswith(state.lower()))), r[0] if r else None)
+    r = g("https://geocoding-api.open-meteo.com/v1/search?count=30&country=US&name=" + urllib.parse.quote(city)).get("results") or []
+    full = STATES.get((state or "").upper(), state or "").lower()
+    # exact state-name match only (abbreviation prefix match mixed up Columbia MO / SC)
+    cand = [x for x in r if x.get("admin1", "").lower() == full]
+    pick = cand[0] if cand else None   # no state match -> geocode failed rather than a wrong city
     cache[k] = [pick["latitude"], pick["longitude"]] if pick else None
     return cache[k]
 
@@ -39,12 +43,12 @@ def window(lat, lon, kick):
         def col(k): return [d.get(k + "_" + m, [None] * len(ts))[i] for i in idx]
         w = [x for x in col("wind_speed_10m") if x is not None]; gu = [x for x in col("wind_gusts_10m") if x is not None]
         pr = [x for x in col("precipitation") if x is not None]; te = [x for x in col("temperature_2m") if x is not None]
-        per[m.split("_")[0]] = {"wind": round(sum(w) / len(w), 1) if w else None, "gust_max": max(gu) if gu else None,
+        per[m.split("_")[0]] = {"wind_hourly": [round(x) for x in col("wind_speed_10m") if x is not None], "wind": round(sum(w) / len(w), 1) if w else None, "gust_max": max(gu) if gu else None,
                                "rain_in": round(sum(pr), 2) if pr else None, "temp": round(sum(te) / len(te)) if te else None,
                                "tstorm": any((x or 0) >= 95 for x in col("weather_code"))}
     # betting-relevant: sustained wind drives totals more than one-hour gust spikes; need 2 of 3 models to agree
     major = sum(1 for v in per.values() if (v["wind"] or 0) >= 20 or (v["rain_in"] or 0) >= 0.3 or v["tstorm"])
-    notable = sum(1 for v in per.values() if (v["wind"] or 0) >= 15 or (v["gust_max"] or 0) >= 35 or (v["rain_in"] or 0) >= 0.1)
+    notable = sum(1 for v in per.values() if (v["wind"] or 0) >= 15 or (v["rain_in"] or 0) >= 0.1)
     return per, (2 if major >= 2 else 1 if notable >= 2 else 0)
 
 def run(now=None):
@@ -83,7 +87,7 @@ def run(now=None):
         if r["game"] + r["kick"] in seen: continue
         seen.add(r["game"] + r["kick"]); uniq.append(r)
     uniq.sort(key=lambda r: (-(r.get("level") or 0), r["kick"]))
-    json.dump({"generated": now.strftime("%Y-%m-%dT%H:%MZ"), "levels": "0 calm; 1 notable = 2+ models: sustained wind >=15 mph or gust >=35 or rain >=0.1in; 2 major = 2+ models: sustained wind >=20 or rain >=0.3in or t-storm, or NWS severe alert", "games": uniq}, open(OUT, "w"), separators=(",", ":"))
+    json.dump({"generated": now.strftime("%Y-%m-%dT%H:%MZ"), "levels": "0 calm; 1 notable = 2+ models: SUSTAINED wind (game-window mean, 10m) >=15 mph or rain >=0.1in; 2 major = 2+ models: sustained wind >=20 or rain >=0.3in or t-storm, or NWS warning/watch for the stadium point (coastal flood products ignored). gust_max is informational only (single highest gust any model shows, overstates); wind_hourly = per-hour sustained wind kick-1h..kick+3.5h per model. Weather calls need 3 sources + a live reading (see weather playbook).", "games": uniq}, open(OUT, "w"), separators=(",", ":"))
     return len(uniq)
 
 if __name__ == "__main__":
